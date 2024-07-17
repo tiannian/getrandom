@@ -1,11 +1,16 @@
-use std::{fmt::Display, fs::File, io::Read, num::NonZeroU32, sync::RwLock};
+use std::{fmt::Display, fs::File, io::Read, num::NonZeroU32, sync::mpsc::Sender};
+
+use once_cell::sync::OnceCell;
 
 #[derive(Debug)]
-pub struct Error {}
+pub enum Error {
+    FailedToSetSender,
+    FailedToSendData,
+}
 
 impl Error {
     pub const fn code(self) -> NonZeroU32 {
-        unsafe { NonZeroU32::new_unchecked(1) }
+        unsafe { NonZeroU32::new_unchecked(190001) }
     }
 }
 
@@ -17,63 +22,29 @@ impl Display for Error {
 
 impl From<NonZeroU32> for Error {
     fn from(_code: NonZeroU32) -> Self {
-        Self {}
+        Self::FailedToSetSender
     }
 }
 
-struct RandomState {
-    pub read_mode: bool,
-    pub data: Vec<u8>,
-    pub offset: usize,
-}
+static RANDOM_STATE: OnceCell<Sender<Vec<u8>>> = OnceCell::new();
 
-impl RandomState {
-    pub const fn new() -> Self {
-        Self {
-            read_mode: false,
-            data: Vec::new(),
-            offset: 0,
-        }
-    }
-}
+pub fn set_recoder(sender: Sender<Vec<u8>>) -> Result<(), Error> {
+    RANDOM_STATE
+        .set(sender)
+        .map_err(|_| Error::FailedToSetSender)?;
 
-static RANDOM_STATE: RwLock<RandomState> = RwLock::new(RandomState::new());
-
-pub fn getrandom_set_read_mode() {
-    let mut state = RANDOM_STATE.write().expect("Failed to read state");
-
-    state.read_mode = true;
-}
-
-pub fn getrandom_read_data() -> Vec<u8> {
-    let reader = RANDOM_STATE.read().expect("Failed to read state");
-
-    reader.data.clone()
+    Ok(())
 }
 
 pub fn getrandom(dest: &mut [u8]) -> Result<(), Error> {
-    let read_mode = {
-        let reader = RANDOM_STATE.read().expect("Failed to read state");
+    let mut file = File::open("/dev/random").expect("Failed to open random");
 
-        reader.read_mode
-    };
+    file.read_exact(dest).expect("Failed to read data");
 
-    let mut state = RANDOM_STATE.write().expect("Failed to read state");
-
-    if read_mode {
-        let begin = state.offset;
-        let end = state.offset + dest.len();
-
-        dest.copy_from_slice(&state.data[begin..end]);
-
-        state.offset = end;
-    } else {
-        let mut file = File::open("/dev/random").expect("Failed to open random");
-
-        file.read_exact(dest).expect("Failed to read data");
-        state.data.extend_from_slice(dest);
-
-        println!("Generated send random: {}", hex::encode(dest));
+    if let Some(sender) = RANDOM_STATE.get() {
+        sender
+            .send(dest.to_vec())
+            .map_err(|_| Error::FailedToSendData)?;
     }
 
     Ok(())
