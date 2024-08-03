@@ -11,6 +11,7 @@ risc0-zkvm = { version = "1.0", default-features = false, features = [
 ], optional = true }
 
 [features]
-default = ["risc0-guest"]
+default = ["memory"]
 recordable = ["once_cell"]
 risc0-guest = ["risc0-zkvm"]
+memory = []
